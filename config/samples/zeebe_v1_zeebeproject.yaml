@@ -1,0 +1,7 @@
+apiVersion: zeebe.zeebe.io/v1
+kind: ZeebeProject
+metadata:
+  name: zeebeproject-sample
+spec:
+  # Add fields here
+  foo: bar

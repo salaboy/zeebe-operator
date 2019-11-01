@@ -1,0 +1,10 @@
+version: "2"
+domain: zeebe.io
+repo: zeebe-operator
+resources:
+- group: zeebe
+  version: v1
+  kind: ZeebeCluster
+- group: zeebe
+  version: v1
+  kind: ZeebeProject
