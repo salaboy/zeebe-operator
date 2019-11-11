@@ -1,6 +1,6 @@
-FROM gcr.io/distroless/static:nonroot
+FROM alpine:3.10
 WORKDIR /
 COPY bin/manager /manager
-USER nonroot:nonroot
+#USER nonroot:nonroot
 
 ENTRYPOINT ["/manager"]
