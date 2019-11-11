@@ -85,7 +85,6 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	r.tekton.TektonV1alpha1().PipelineResources(zeebeCluster.Namespace).Create(pipelineResource)
 	//@TODO: END
 
-
 	var taskId = guuid.New().String()[0:8]
 	var clusterName = zeebeCluster.Name + "-" + taskId
 	task := builder.Task("install-task-"+zeebeCluster.Name+"-"+taskId, zeebeCluster.Namespace,
@@ -95,7 +94,6 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 				builder.StepCommand("make", "-C", "/workspace/zeebe-base-chart/", "build", "install"),
 				builder.StepEnvVar("CLUSTER_NAME", clusterName),
 				builder.StepEnvVar("NAMESPACE", zeebeCluster.Spec.TargetNamespace))))
-
 
 	//err := ctrl.SetControllerReference(&zeebeCluster, task, r.Scheme )
 	//if err != nil {
@@ -112,8 +110,6 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 			builder.TaskRunTaskRef("install-task-"+zeebeCluster.Name+"-"+taskId),
 			builder.TaskRunInputs(builder.TaskRunInputsResource("zeebe-base-chart",
 				builder.TaskResourceBindingRef("zeebe-base-chart")))))
-
-
 
 	//err = ctrl.SetControllerReference(&zeebeCluster, taskRun, r.Scheme)
 	//if err != nil {
