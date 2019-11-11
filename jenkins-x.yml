@@ -2,4 +2,4 @@ buildPack: go
 pipelineConfig:
   agent:
     label: jenkins-go
-    container: camunda-consulting-de/builder-go-kubebuilder:latest
+    container: gcr.io/camunda-consulting-de/builder-go-kubebuilder:0.0.5
