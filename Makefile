@@ -13,6 +13,8 @@ endif
 
 all: manager
 
+build: manager
+
 # Run tests
 test: generate fmt vet manifests
 	go test ./... -coverprofile cover.out
