@@ -34,10 +34,12 @@ type ZeebeClusterSpec struct {
 type ZeebeClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	ClusterName string            `json:"clusterName"`
+	Conditions  []StatusCondition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
-
+// +kubebuilder:subresource:status
 // ZeebeCluster is the Schema for the zeebeclusters API
 type ZeebeCluster struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -58,4 +60,25 @@ type ZeebeClusterList struct {
 
 func init() {
 	SchemeBuilder.Register(&ZeebeCluster{}, &ZeebeClusterList{})
+}
+
+type ConditionStatus string
+
+var (
+	ConditionStatusHealthy   ConditionStatus = "Healthy"
+	ConditionStatusUnhealthy ConditionStatus = "Unhealthy"
+	ConditionStatusUnknown   ConditionStatus = "Unknown"
+)
+
+type StatusCondition struct {
+	Type   string          `json:"type"`
+	Status ConditionStatus `json:"status"`
+	// +optional
+	LastProbeTime metav1.Time `json:"lastProbeTime,omitempty"`
+	// +optional
+	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty"`
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
 }

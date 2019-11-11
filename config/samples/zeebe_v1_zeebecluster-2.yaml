@@ -3,6 +3,5 @@ kind: ZeebeCluster
 metadata:
   name: zeebecluster-salaboy
 spec:
-  # Add fields here
   name: salaboy
   targetNamespace: default

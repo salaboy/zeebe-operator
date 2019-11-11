@@ -1,8 +1,7 @@
 apiVersion: zeebe.zeebe.io/v1
 kind: ZeebeCluster
 metadata:
-  name: zeebecluster-sample
+  name: my-first-zeebe-cluster
 spec:
-  # Add fields here
   name: my-first-zeebe-cluster
   targetNamespace: default

@@ -13,6 +13,8 @@ spec:
     plural: zeebeclusters
     singular: zeebecluster
   scope: ""
+  subresources:
+    status: {}
   validation:
     openAPIV3Schema:
       description: ZeebeCluster is the Schema for the zeebeclusters API
@@ -44,6 +46,36 @@ spec:
           type: object
         status:
           description: ZeebeClusterStatus defines the observed state of ZeebeCluster
+          properties:
+            clusterName:
+              description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
+                of cluster Important: Run "make" to regenerate code after modifying
+                this file'
+              type: string
+            conditions:
+              items:
+                properties:
+                  lastProbeTime:
+                    format: date-time
+                    type: string
+                  lastTransitionTime:
+                    format: date-time
+                    type: string
+                  message:
+                    type: string
+                  reason:
+                    type: string
+                  status:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - status
+                - type
+                type: object
+              type: array
+          required:
+          - clusterName
           type: object
       type: object
   version: v1

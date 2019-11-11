@@ -18,19 +18,22 @@ package controllers
 import (
 	"context"
 	"github.com/go-logr/logr"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	zeebev1 "zeebe-operator/api/v1"
-
 	guuid "github.com/google/uuid"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	tekton "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
 	"github.com/tektoncd/pipeline/test/builder"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	zeebev1 "zeebe-operator/api/v1"
 )
 
 // ZeebeClusterReconciler reconciles a ZeebeCluster object
 type ZeebeClusterReconciler struct {
+	Scheme *runtime.Scheme
 	client.Client
 	tekton tekton.Clientset
 	Log    logr.Logger
@@ -43,19 +46,27 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	ctx := context.Background()
 	log := r.Log.WithValues("zeebecluster", req.NamespacedName)
 	// your logic here
-	var app zeebev1.ZeebeCluster
-	if err := r.Get(ctx, req.NamespacedName, &app); err != nil {
+	var zeebeCluster zeebev1.ZeebeCluster
+	if err := r.Get(ctx, req.NamespacedName, &zeebeCluster); err != nil {
 		// it might be not found if this is a delete request
-		//if ignoreNotFound(err) == nil { return ctrl.Result{}, nil
-		//}
+		if ignoreNotFound(err) == nil {
+			return ctrl.Result{}, nil
+		}
 		log.Error(err, "unable to fetch cluster")
 		return ctrl.Result{}, err
 	}
-	// process the request, make some changes to the cluster, // set some status on `app`, etc
-	// update status, since we probably changed it above
-	log.Info("> Zeebe Cluster: ", "cluster", app)
 
-	//if err := r.Update(ctx, &app); err != nil {
+	if zeebeCluster.Status.ClusterName != "" {
+		return ctrl.Result{}, nil
+	}
+
+	log.Info("> Scheme: ", "scheme", r.Scheme)
+
+	// process the request, make some changes to the cluster, // set some status on `zeebeCluster`, etc
+	// update status, since we probably changed it above
+	log.Info("> Zeebe Cluster: ", "cluster", zeebeCluster)
+
+	//if err := r.Update(ctx, &zeebeCluster); err != nil {
 	//	log.Error(err, "unable to update cluster spec")
 	//	return ctrl.Result{}, err
 	//}
@@ -65,36 +76,59 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	// 2) should I craete one task + task run per Zeebe Cluster? I think that it make sense
 
 	//@TODO:  Do as initialization of the Operator ..
-	pipelineResource := builder.PipelineResource("zeebe-base-chart", app.Namespace,
+	pipelineResource := builder.PipelineResource("zeebe-base-chart", zeebeCluster.Namespace,
 		builder.PipelineResourceSpec(v1alpha1.PipelineResourceType("git"),
 			builder.PipelineResourceSpecParam("revision", "master"),
 			builder.PipelineResourceSpecParam("url", "https://github.com/salaboy/zeebe-base-chart")))
 
 	log.Info("> Creating PipelineResource: ", "pipelineResource", pipelineResource)
-	r.tekton.TektonV1alpha1().PipelineResources(app.Namespace).Create(pipelineResource)
+	r.tekton.TektonV1alpha1().PipelineResources(zeebeCluster.Namespace).Create(pipelineResource)
 	//@TODO: END
 
-	// I should create a task per ZeebeCluster ... Here I need to make this task generation random as it has also parameters that might change.
-	task := builder.Task("zeebe-install-task-"+app.Name, app.Namespace,
+
+	var taskId = guuid.New().String()[0:8]
+	var clusterName = zeebeCluster.Name + "-" + taskId
+	task := builder.Task("install-task-"+zeebeCluster.Name+"-"+taskId, zeebeCluster.Namespace,
 		builder.TaskSpec(
 			builder.TaskInputs(builder.InputsResource("zeebe-base-chart", "git")),
 			builder.Step("clone-base-helm-chart", "gcr.io/jenkinsxio/builder-go",
 				builder.StepCommand("make", "-C", "/workspace/zeebe-base-chart/", "build", "install"),
-				builder.StepEnvVar("CLUSTER_NAME", app.Name),
-				builder.StepEnvVar("NAMESPACE", app.Spec.TargetNamespace))))
+				builder.StepEnvVar("CLUSTER_NAME", clusterName),
+				builder.StepEnvVar("NAMESPACE", zeebeCluster.Spec.TargetNamespace))))
 
-	r.tekton.TektonV1alpha1().Tasks(app.Namespace).Create(task)
 
-	taskRun := builder.TaskRun("zeebe-install-task-run-"+guuid.New().String(), app.Namespace,
+	//err := ctrl.SetControllerReference(&zeebeCluster, task, r.Scheme )
+	//if err != nil {
+	//	log.Error(err, "unable set owner to task")
+	//}
+	log.Info("> Creating Task: ", "task", task)
+	r.tekton.TektonV1alpha1().Tasks(zeebeCluster.Namespace).Create(task)
+
+	taskRun := builder.TaskRun("install-task-run-"+zeebeCluster.Name+"-"+taskId, zeebeCluster.Namespace,
 		builder.TaskRunSpec(
 			builder.TaskRunServiceAccountName("pipelinerunner"),
 			builder.TaskRunDeprecatedServiceAccount("pipelinerunner", "pipelinerunner"), // This require a SA being created for it to run
 
-			builder.TaskRunTaskRef("zeebe-install-task-"+app.Name),
+			builder.TaskRunTaskRef("install-task-"+zeebeCluster.Name+"-"+taskId),
 			builder.TaskRunInputs(builder.TaskRunInputsResource("zeebe-base-chart",
 				builder.TaskResourceBindingRef("zeebe-base-chart")))))
 
-	r.tekton.TektonV1alpha1().TaskRuns(app.Namespace).Create(taskRun)
+
+
+	//err = ctrl.SetControllerReference(&zeebeCluster, taskRun, r.Scheme)
+	//if err != nil {
+	//	log.Error(err, "unable set owner to taskRun")
+	//}
+
+	log.Info("> Creating TaskRun: ", "taskrun", taskRun)
+	r.tekton.TektonV1alpha1().TaskRuns(zeebeCluster.Namespace).Create(taskRun)
+
+	zeebeCluster.Status.ClusterName = clusterName
+
+	if err := r.Status().Update(ctx, &zeebeCluster); err != nil {
+		log.Error(err, "unable to update cluster spec")
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -106,4 +140,18 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&zeebev1.ZeebeCluster{}).
 		Complete(r)
+}
+
+func ignoreNotFound(err error) error {
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+func ownedByOther(obj metav1.Object, apiVersion schema.GroupVersion, kind, name string) *metav1.OwnerReference {
+	if ownerRef := metav1.GetControllerOf(obj); ownerRef != nil && (ownerRef.Name != name || ownerRef.Kind != kind || ownerRef.APIVersion != apiVersion.String()) {
+		return ownerRef
+	}
+	return nil
 }

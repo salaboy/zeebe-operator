@@ -1,1 +1,5 @@
 buildPack: go
+pipelineConfig:
+  agent:
+    label: jenkins-go
+    container: salaboy/builder-go-kubebuilder:latest
