@@ -1,6 +1,5 @@
-FROM amd64/alpine:3.10
+FROM alpine:3.10
 WORKDIR /
-COPY bin/manager /manager
-#USER nonroot:nonroot
+COPY ./bin/manager /manager
 
 ENTRYPOINT ["/manager"]
