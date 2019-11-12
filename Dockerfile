@@ -1,11 +1,7 @@
 FROM alpine:3.10
-RUN apk add --update --no-cache ca-certificates git bash
+RUN apk add --update --no-cache ca-certificates git libc6-compat
 
 WORKDIR /
 COPY ./bin/manager /manager
 
-RUN /bin/bash -c 'chmod +x /manager'
-
-CMD ["/manager"]
-
-#CMD ["/manager"]
+ENTRYPOINT ["/manager"]
