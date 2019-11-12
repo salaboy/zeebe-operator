@@ -4,4 +4,6 @@ RUN apk add --update --no-cache ca-certificates git
 WORKDIR /
 COPY ./bin/manager /manager
 
-ENTRYPOINT ["/manager"]
+CMD ["ls", "-al"]
+
+#CMD ["/manager"]
