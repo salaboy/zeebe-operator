@@ -4,6 +4,8 @@ RUN apk add --update --no-cache ca-certificates git
 WORKDIR /
 COPY ./bin/manager /manager
 
-CMD ["ls", "-al"]
+RUN ["chmod", "777", "/manager"]
+
+CMD ["/manager"]
 
 #CMD ["/manager"]
