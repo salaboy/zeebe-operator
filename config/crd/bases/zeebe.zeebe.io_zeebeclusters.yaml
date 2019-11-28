@@ -11,8 +11,10 @@ spec:
     kind: ZeebeCluster
     listKind: ZeebeClusterList
     plural: zeebeclusters
+    shortNames:
+    - zb
     singular: zeebecluster
-  scope: ""
+  scope: Cluster
   subresources:
     status: {}
   validation:

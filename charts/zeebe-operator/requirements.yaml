@@ -1,0 +1,4 @@
+dependencies:
+  - name: tekton
+    repository: jenkins-x official chart repo
+    version: 0.8.0
