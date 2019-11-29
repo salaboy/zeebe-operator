@@ -18,7 +18,6 @@ package controllers
 import (
 	"context"
 	"github.com/go-logr/logr"
-	guuid "github.com/google/uuid"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	tekton "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
 	"github.com/tektoncd/pipeline/test/builder"
@@ -29,9 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
-
-	//"k8s.io/helm/pkg/helm"
-	//"k8s.io/helm/pkg/helm/portforwarder"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -66,9 +62,9 @@ func (p *PipelineRunner) initPipelineRunner(namespace string) {
 	//@TODO: END
 }
 
-func (p *PipelineRunner) createTaskAndTaskRun(taskId string, namespace string, zeebeCluster zeebev1.ZeebeCluster, r ZeebeClusterReconciler) {
+func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeCluster zeebev1.ZeebeCluster, r ZeebeClusterReconciler) {
 	log := p.Log.WithValues("zeebecluster", namespace)
-	task := builder.Task("install-task-"+zeebeCluster.Name+"-"+taskId, zeebeCluster.Namespace,
+	task := builder.Task("install-task-"+zeebeCluster.Name, zeebeCluster.Namespace,
 		builder.TaskSpec(
 			builder.TaskInputs(builder.InputsResource("zeebe-base-chart", "git")),
 			builder.Step("clone-base-helm-chart", "gcr.io/jenkinsxio/builder-go:2.0.1028-359",
@@ -87,12 +83,12 @@ func (p *PipelineRunner) createTaskAndTaskRun(taskId string, namespace string, z
 
 	log.Info("> Creating Task: ", "task", task)
 
-	taskRun := builder.TaskRun("install-task-run-"+zeebeCluster.Name+"-"+taskId, zeebeCluster.Namespace,
+	taskRun := builder.TaskRun("install-task-run-"+zeebeCluster.Name, zeebeCluster.Namespace,
 		builder.TaskRunSpec(
 			builder.TaskRunServiceAccountName("pipelinerunner"),
 			builder.TaskRunDeprecatedServiceAccount("pipelinerunner", "pipelinerunner"), // This require a SA being created for it to run
 
-			builder.TaskRunTaskRef("install-task-"+zeebeCluster.Name+"-"+taskId),
+			builder.TaskRunTaskRef("install-task-"+zeebeCluster.Name),
 			builder.TaskRunInputs(builder.TaskRunInputsResource("zeebe-base-chart",
 				builder.TaskResourceBindingRef("zeebe-base-chart")))))
 
@@ -108,80 +104,42 @@ func (p *PipelineRunner) createTaskAndTaskRun(taskId string, namespace string, z
 
 }
 
-//func (r *ZeebeClusterReconciler) watchClusterResources(zeebeCluster zeebev1.ZeebeCluster, clusterName string) (status string, err error) {
-//	//clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
-//	ctx := context.Background()
-//	api := r.k8s.AppsV1()
-//	listOptions := metav1.ListOptions{
-//		LabelSelector: "app.kubernetes.io/instance=" + "zeebecluster-salaboy",
-//	}
-//	watcher, err := api.StatefulSets("default").Watch(listOptions)
-//	if err != nil {
-//		r.Log.Error(err, "unable to create watch ")
-//	}
-//
-//	ch := watcher.ResultChan()
-//	// a channel to tell it to stop
-//	stopchan := make(chan struct{})
-//	// a channel to signal that it's stopped
-//	//stoppedchan := make(chan struct{})
-//
-//	for {
-//		select {
-//		case event, ok := <-ch:
-//			if !ok {
-//				// the channel got closed, so we need to restart
-//				r.Log.Info("Kubernetes hung up on us, restarting event watcher")
-//				return "restart", nil
-//			}
-//
-//			statefulSet, ok := event.Object.(*appsV1.StatefulSet)
-//			if !ok {
-//				r.Log.Info("ERROR: unexpected type")
-//			}
-//			switch event.Type {
-//			case watch.Added:
-//				r.Log.Info("StatefulSet Added: " +
-//					statefulSet.Name)
-//
-//				_, err := ctrl.CreateOrUpdate(ctx, r.Client, statefulSet, func() error {
-//					return ctrl.SetControllerReference(&zeebeCluster, statefulSet, r.Scheme)
-//				})
-//				if err != nil {
-//					r.Log.Error(err, "Error setting up owner for statefulset")
-//				}
-//			case watch.Deleted:
-//				r.Log.Info("Pod Deleted: " +
-//					statefulSet.Name)
-//			}
-//
-//		case <-time.After(30 * time.Minute):
-//			// deal with the issue where we get no events
-//			r.Log.Info("Timeout, restarting event watcher")
-//			return "timeout", nil
-//		case <-stopchan:
-//			// stop
-//			r.Log.Info("Stopping watcher")
-//			return "stopped", nil
-//		}
-//
-//	}
-//
-//}
-//
-//func (r *ZeebeClusterReconciler) createMonitor(zeebeCluster zeebev1.ZeebeCluster, clusterName string) {
-//	for {
-//		if status, err := r.watchClusterResources(zeebeCluster, clusterName); err != nil {
-//			if status == "stopped" {
-//				return
-//			}
-//			r.Log.Error(err, "error watching cluster: "+clusterName+" resources.")
-//		}
-//		time.Sleep(5 * time.Second)
-//	}
-//
-//}
+func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace string) {
+	log := p.Log.WithValues("zeebecluster", namespace)
+	task := builder.Task("delete-task-"+release, namespace,
+		builder.TaskSpec(
+			builder.TaskInputs(builder.InputsResource("zeebe-base-chart", "git")),
+			builder.Step("clone-base-helm-chart", "gcr.io/jenkinsxio/builder-go:2.0.1028-359",
+				builder.StepCommand("make", "-C", "/workspace/zeebe-base-chart/", "delete"),
+				builder.StepEnvVar("CLUSTER_NAME", release))))
 
+
+
+	_, errorTask := p.tekton.TektonV1alpha1().Tasks(namespace).Create(task)
+	if errorTask != nil {
+		log.Error(errorTask, "Erorr Creating task")
+	}
+
+	log.Info("> Creating Task: ", "task", task)
+
+	taskRun := builder.TaskRun("delete-task-run-"+release, namespace,
+		builder.TaskRunSpec(
+			builder.TaskRunServiceAccountName("pipelinerunner"),
+			builder.TaskRunDeprecatedServiceAccount("pipelinerunner", "pipelinerunner"), // This require a SA being created for it to run
+
+			builder.TaskRunTaskRef("delete-task-"+release),
+			builder.TaskRunInputs(builder.TaskRunInputsResource("zeebe-base-chart",
+				builder.TaskResourceBindingRef("zeebe-base-chart")))))
+
+
+	log.Info("> Creating TaskRun: ", "taskrun", taskRun)
+	_, errorTaskRun := p.tekton.TektonV1alpha1().TaskRuns(namespace).Create(taskRun)
+
+	if errorTaskRun != nil {
+		log.Error(errorTaskRun, "Error Creating taskRun")
+	}
+
+}
 /* Reconcile should do:
 	1) get CRD Cluster
     2) run pipeline to install/update
@@ -206,14 +164,17 @@ func (p *PipelineRunner) createTaskAndTaskRun(taskId string, namespace string, z
 func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	log := r.Log.WithValues("zeebecluster", req.NamespacedName)
-	// your logic here
 	var zeebeCluster zeebev1.ZeebeCluster
 	if err := r.Get(ctx, req.NamespacedName, &zeebeCluster); err != nil {
 		// it might be not found if this is a delete request
 		if ignoreNotFound(err) == nil {
+			log.Info("Hey there.. deleting cluster happened: " + req.NamespacedName.Name)
+			r.pr.createTaskAndTaskRunDelete(req.NamespacedName.Name, "default")
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "unable to fetch cluster")
+
+
 		return ctrl.Result{}, err
 	}
 
@@ -230,10 +191,10 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 
 	r.pr.initPipelineRunner("default")
 
-	var taskId = guuid.New().String()[0:8]
-	var clusterName = zeebeCluster.Name + "-" + taskId
 
-	r.pr.createTaskAndTaskRun(taskId, "default", zeebeCluster, *r)
+	var clusterName = zeebeCluster.Name
+
+	r.pr.createTaskAndTaskRunInstall("default", zeebeCluster, *r)
 
 	// Create watch inside goroutine to look for resources matching the name of the cluster (labels) and set ownerreference
 	// Also monitor for status
@@ -261,18 +222,6 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	r.k8s = *clientSet
 
-//	//port forward tiller
-//	tillerTunnel, _ := portforwarder.New("kube-system", clientSet, mgr.GetConfig())
-//
-////	new helm client
-//	helmClient := helm.NewClient()
-//
-//	//list/print releases
-//	resp, _ := helmClient.ListReleases()
-//	for _, release := range resp.Releases {
-//		r.Log.Info(">> Release Name" + release.GetName())
-//	}
-
 	tektonClientSet, _ := tekton.NewForConfig(mgr.GetConfig())
 	r.pr.tekton = *tektonClientSet
 	r.pr.Log = r.Log
@@ -291,8 +240,6 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 
 				r.Log.Info("StatefulSet watch: " + statefulSet.Name)
-				r.Log.Info("StatefulSet Labels: ", "labels", statefulSet.GetLabels())
-				r.Log.Info("StatefulSet Labels: ", "appLabel", statefulSet.GetLabels()["app.kubernetes.io/instance"])
 
 				var zeebeClusterList zeebev1.ZeebeClusterList
 				//client.MatchingLabels{"name" :statefulSet.GetLabels()["app.kubernetes.io/instance"] }
@@ -300,8 +247,6 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					r.Log.Info("unable to get zeebe clusters for statefulset", "statefulset", obj.Meta.GetName())
 					return nil
 				}
-				r.Log.Info("List: ", "list", zeebeClusterList.Items)
-				r.Log.Info("Length: ", "length", len(zeebeClusterList.Items))
 				if len(zeebeClusterList.Items) == 1 {
 					if zeebeClusterList.Items[0].Name == statefulSet.GetLabels()["app.kubernetes.io/instance"] {
 						if zeebeClusterList.Items[0].OwnerReferences == nil {
@@ -330,17 +275,12 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 
 				r.Log.Info("Service watch: " + service.Name)
-				r.Log.Info("Service Labels All: ", "labels", service.GetLabels())
-				r.Log.Info("Service App Label: ", "appLabel", service.GetLabels()["app.kubernetes.io/instance"])
-
 				var zeebeClusterList zeebev1.ZeebeClusterList
 				//, client.MatchingFields{"metadata.name" :service.GetLabels()["app.kubernetes.io/instance"]}
 				if err := r.List(context.Background(), &zeebeClusterList); err != nil {
 					r.Log.Info("unable to get zeebe clusters for statefulset", "statefulset", obj.Meta.GetName())
 					return nil
 				}
-				r.Log.Info("List: ", "list", zeebeClusterList.Items)
-				r.Log.Info("Length: ", "length", len(zeebeClusterList.Items))
 				if len(zeebeClusterList.Items) == 1 {
 					if zeebeClusterList.Items[0].Name == service.GetLabels()["app.kubernetes.io/instance"] {
 						if zeebeClusterList.Items[0].OwnerReferences == nil {
