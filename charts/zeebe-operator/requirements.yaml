@@ -1,5 +1,6 @@
 dependencies:
-  - name: tekton
-    repository: http://chartmuseum.jenkins-x.io
+  - name: jenkins-x/tekton
+    repository: https://storage.googleapis.com/chartmuseum.jenkins-x.io
     version: 0.8.0
     condition: "tekton.enabled"
+    alias: tekton
