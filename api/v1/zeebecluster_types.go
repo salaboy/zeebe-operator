@@ -26,7 +26,7 @@ import (
 type ZeebeClusterSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	StatefulSetName string `json:"statefulSetName, omitempty"`
+	StatefulSetName string `json:"statefulSetName,omitempty"`
 }
 
 // ZeebeClusterStatus defines the observed state of ZeebeCluster
