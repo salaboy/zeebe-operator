@@ -10,5 +10,5 @@ subjects:
 - kind: ServiceAccount
 #  name: default
 #  namespace: default
-  name: pipelinerunnner
+  name: default
   namespace: jx-staging
