@@ -1,5 +1,5 @@
 dependencies:
   - name: tekton
-    repository: jenkins-x/tekton
+    repository: http://chartmuseum.jenkins-x.io
     version: 0.8.0
     condition: "tekton.enabled"
