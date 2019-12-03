@@ -14,7 +14,7 @@ spec:
     shortNames:
     - zb
     singular: zeebecluster
-  scope: namespaced
+  scope: Namespaced
   subresources:
     status: {}
   validation:
