@@ -162,7 +162,7 @@ func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace st
 // +kubebuilder:rbac:groups=zeebe.zeebe.io,resources=zeebeclusters/status,verbs=get;update;patch
 
 // CRUD core: namespaces, events, secrets, services and configmaps
-// +kubebuilder:rbac:groups=core,resources=services;configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=services;configmaps;namespaces,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services/status;configmaps/status,verbs=get
 
 // LIST core: endpoints
