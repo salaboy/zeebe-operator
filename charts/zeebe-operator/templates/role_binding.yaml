@@ -8,7 +8,6 @@ roleRef:
   name: manager-role
 subjects:
 - kind: ServiceAccount
-#  name: default
-#  namespace: default
   name: default
-  namespace: jx-staging
+  namespace: default
+  #namespace: jx-staging
