@@ -1,4 +1,5 @@
 dependencies:
   - name: tekton
-    repository: jenkins-x official chart repo
+    repository: jenkins-x/tekton
     version: 0.8.0
+    condition: "tekton.enabled"
