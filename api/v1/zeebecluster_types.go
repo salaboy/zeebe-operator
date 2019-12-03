@@ -26,8 +26,7 @@ import (
 type ZeebeClusterSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Name            string `json:"name"`
-	TargetNamespace string `json:"targetNamespace"`
+	StatefulSetName string `json:"statefulSetName, omitempty"`
 }
 
 // ZeebeClusterStatus defines the observed state of ZeebeCluster
@@ -35,6 +34,7 @@ type ZeebeClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 	ClusterName string            `json:"clusterName"`
+	StatusName string				  `json:"statusName"`
 	Conditions  []StatusCondition `json:"conditions,omitempty"`
 }
 

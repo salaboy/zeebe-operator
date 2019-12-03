@@ -1,7 +1,0 @@
-apiVersion: zeebe.zeebe.io/v1
-kind: ZeebeCluster
-metadata:
-  name: zeebecluster-salaboy
-spec:
-  name: salaboy
-  targetNamespace: default

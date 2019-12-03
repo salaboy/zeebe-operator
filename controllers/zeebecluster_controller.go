@@ -17,6 +17,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"github.com/go-logr/logr"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	tekton "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
@@ -27,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,6 +49,17 @@ type ZeebeClusterReconciler struct {
 type PipelineRunner struct {
 	tekton tekton.Clientset
 	Log    logr.Logger
+}
+
+var pipelinesNamespace = "default" // This is related to the Role, RB, and SA to run pipelines
+
+func (p *PipelineRunner) checkForTask(name string) bool {
+	options := metav1.GetOptions{}
+	t, err := p.tekton.TektonV1alpha1().Tasks(pipelinesNamespace).Get("install-task-"+name, options)
+	if err == nil && t != nil {
+		return true
+	}
+	return false
 }
 
 func (p *PipelineRunner) initPipelineRunner(namespace string) {
@@ -70,15 +83,15 @@ func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeClus
 			builder.Step("clone-base-helm-chart", "gcr.io/jenkinsxio/builder-go:2.0.1028-359",
 				builder.StepCommand("make", "-C", "/workspace/zeebe-base-chart/", "build", "install"),
 				builder.StepEnvVar("CLUSTER_NAME", zeebeCluster.Name),
-				builder.StepEnvVar("NAMESPACE", zeebeCluster.Spec.TargetNamespace))))
+				builder.StepEnvVar("NAMESPACE", zeebeCluster.Name))))
 
 	if err := ctrl.SetControllerReference(&zeebeCluster, task, r.Scheme); err != nil {
 		log.Error(err, "unable set owner to task")
 	}
 
-	_, errorTask := p.tekton.TektonV1alpha1().Tasks(zeebeCluster.Spec.TargetNamespace).Create(task)
+	_, errorTask := p.tekton.TektonV1alpha1().Tasks(namespace).Create(task)
 	if errorTask != nil {
-		log.Error(errorTask, "Erorr Creating task")
+		log.Error(errorTask, "Error Creating task")
 	}
 
 	log.Info("> Creating Task: ", "task", task)
@@ -96,7 +109,7 @@ func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeClus
 		log.Error(err, "unable set owner to taskRun")
 	}
 	log.Info("> Creating TaskRun: ", "taskrun", taskRun)
-	_, errorTaskRun := p.tekton.TektonV1alpha1().TaskRuns(zeebeCluster.Spec.TargetNamespace).Create(taskRun)
+	_, errorTaskRun := p.tekton.TektonV1alpha1().TaskRuns(namespace).Create(taskRun)
 
 	if errorTaskRun != nil {
 		log.Error(errorTaskRun, "Error Creating taskRun")
@@ -113,11 +126,9 @@ func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace st
 				builder.StepCommand("make", "-C", "/workspace/zeebe-base-chart/", "delete"),
 				builder.StepEnvVar("CLUSTER_NAME", release))))
 
-
-
 	_, errorTask := p.tekton.TektonV1alpha1().Tasks(namespace).Create(task)
 	if errorTask != nil {
-		log.Error(errorTask, "Erorr Creating task")
+		log.Error(errorTask, "Error Creating task")
 	}
 
 	log.Info("> Creating Task: ", "task", task)
@@ -131,7 +142,6 @@ func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace st
 			builder.TaskRunInputs(builder.TaskRunInputsResource("zeebe-base-chart",
 				builder.TaskResourceBindingRef("zeebe-base-chart")))))
 
-
 	log.Info("> Creating TaskRun: ", "taskrun", taskRun)
 	_, errorTaskRun := p.tekton.TektonV1alpha1().TaskRuns(namespace).Create(taskRun)
 
@@ -140,6 +150,7 @@ func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace st
 	}
 
 }
+
 /* Reconcile should do:
 	1) get CRD Cluster
     2) run pipeline to install/update
@@ -168,42 +179,102 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	if err := r.Get(ctx, req.NamespacedName, &zeebeCluster); err != nil {
 		// it might be not found if this is a delete request
 		if ignoreNotFound(err) == nil {
-			log.Info("Hey there.. deleting cluster happened: " + req.NamespacedName.Name)
+			log.Info("Hey there.. deleting cluster happened: " + req.NamespacedName.Name) // if there is no cluster.. let's make sure that we delete the helm release
 			r.pr.createTaskAndTaskRunDelete(req.NamespacedName.Name, "default")
+
+			namespace := new(coreV1.Namespace)
+			namespace.SetName(req.NamespacedName.Name)
+
+			if err := r.Delete(ctx,  namespace, client.PropagationPolicy(metav1.DeletePropagationBackground)); ignoreNotFound(err) != nil {
+				log.Error(err, "unable to delete  namespace", "namespace", namespace)
+			} else {
+				log.V(0).Info("namespace deleted", "namespace", namespace)
+			}
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "unable to fetch cluster")
 
-
 		return ctrl.Result{}, err
-	}
-
-	if zeebeCluster.Status.ClusterName != "" {
-		return ctrl.Result{}, nil
 	}
 
 	// process the request, make some changes to the cluster, // set some status on `zeebeCluster`, etc
 	// update status, since we probably changed it above
 	log.Info("> Zeebe Cluster: ", "cluster", zeebeCluster)
 
-	// Create a new Monitor here to watch for StatefulSet and update status when the resources are created
-	// The main problem here is that helm will install resources.. and here I need to search for those based on labels/names
+	//create namespace if required
+	namespace := new(coreV1.Namespace)
+	namespace.SetName(zeebeCluster.GetName())
+	_, err := ctrl.CreateOrUpdate(ctx, r.Client, namespace, func() error {
+		//util.AppendLabels(namespace, zb)
+		return ctrl.SetControllerReference(&zeebeCluster, namespace, r.Scheme)
+	})
+	if err != nil {
+		log.Error(err, "unable to create namespace")
+		return ctrl.Result{}, err
+	}
 
-	r.pr.initPipelineRunner("default")
 
 
 	var clusterName = zeebeCluster.Name
 
-	r.pr.createTaskAndTaskRunInstall("default", zeebeCluster, *r)
+	// Check if tasks needs to be created .. if not avoid
+	if !r.pr.checkForTask(clusterName) { // If the task was created before avoid creating it again
+		// Check if pipeline runner was initialized before
+		r.pr.initPipelineRunner(pipelinesNamespace)
 
-	// Create watch inside goroutine to look for resources matching the name of the cluster (labels) and set ownerreference
-	// Also monitor for status
+		// I need to find a way to understand when I need to create a new task run, if needed (maybe for update use cases)
+		r.pr.createTaskAndTaskRunInstall(pipelinesNamespace, zeebeCluster, *r)
+	}
 
 	zeebeCluster.Status.ClusterName = clusterName
 
 	log.Info("> Zeebe Cluster Name: " + clusterName)
 
-	//r.createMonitor(zeebeCluster, clusterName)
+	if len(zeebeCluster.Spec.StatefulSetName) > 0 {
+		var statefulSet appsV1.StatefulSet
+		var statefulSetNamespacedName types.NamespacedName
+		statefulSetNamespacedName.Name = zeebeCluster.Spec.StatefulSetName
+		statefulSetNamespacedName.Namespace = namespace.Name
+		if err := r.Get(ctx, statefulSetNamespacedName, &statefulSet); err != nil {
+			// it might be not found if this is a delete request
+			if ignoreNotFound(err) == nil {
+				log.Error(err, "Not Found! ")
+				return ctrl.Result{}, nil
+			}
+			log.Error(err, "unable to fetch cluster")
+
+			return ctrl.Result{}, err
+		}
+		r.Log.Info("Found StatefulSet replicas: ", "Replicas: ", statefulSet.Status.Replicas)
+		r.Log.Info("Found StatefulSet replicas: ", "readyReplicas: ", statefulSet.Status.ReadyReplicas)
+		if statefulSet.Status.ReadyReplicas == statefulSet.Status.Replicas {
+			setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
+				Type:    "Ready",
+				Status:  zeebev1.ConditionStatusHealthy,
+				Reason:  fmt.Sprintf("%s%d/%d", "Replicas ",statefulSet.Status.ReadyReplicas,statefulSet.Status.Replicas),
+				Message: "Zeebe Cluster Ready",
+			})
+			zeebeCluster.Status.StatusName = "Ready"
+
+		}else {
+			setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
+				Type:    "Pending",
+				Status:  zeebev1.ConditionStatusUnhealthy,
+				Reason:  fmt.Sprintf("%s%d/%d", "Replicas ",statefulSet.Status.ReadyReplicas,statefulSet.Status.Replicas),
+				Message: "Zeebe Cluster Starting",
+			})
+			zeebeCluster.Status.StatusName = "Pending"
+		}
+	} else {
+
+		setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
+			Type:    "Creating",
+			Status:  zeebev1.ConditionStatusUnhealthy,
+			Reason:  "Booting..",
+			Message: "Zeebe Cluster Being Created",
+		})
+		zeebeCluster.Status.StatusName = "Creating"
+	}
 
 	if err := r.Status().Update(ctx, &zeebeCluster); err != nil {
 		log.Error(err, "unable to update cluster spec")
@@ -229,7 +300,7 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&zeebev1.ZeebeCluster{}).
 
-		//Owns(&core.ConfigMap{}).
+		Owns(&coreV1.ConfigMap{}).
 		Owns(&coreV1.Service{}).
 		Owns(&appsV1.StatefulSet{}).
 		Watches(&source.Kind{Type: &appsV1.StatefulSet{}}, &handler.EnqueueRequestsFromMapFunc{
@@ -239,8 +310,6 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					r.Log.Info("ERROR: unexpected type")
 				}
 
-				r.Log.Info("StatefulSet watch: " + statefulSet.Name)
-
 				var zeebeClusterList zeebev1.ZeebeClusterList
 				//client.MatchingLabels{"name" :statefulSet.GetLabels()["app.kubernetes.io/instance"] }
 				if err := r.List(context.Background(), &zeebeClusterList); err != nil {
@@ -249,93 +318,104 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 				if len(zeebeClusterList.Items) == 1 {
 					if zeebeClusterList.Items[0].Name == statefulSet.GetLabels()["app.kubernetes.io/instance"] {
-						if zeebeClusterList.Items[0].OwnerReferences == nil {
+						if statefulSet.OwnerReferences == nil {
+							r.Log.Info("Zeebe Cluster found, updating statefulset ownership ", "cluster", zeebeClusterList.Items[0].Name)
 							_, err := ctrl.CreateOrUpdate(context.Background(), r.Client, statefulSet, func() error {
-								r.Log.Info("Zeebe Cluster found, updating statefulset ownership ", "cluster", zeebeClusterList.Items[0].Name)
-								return ctrl.SetControllerReference(&zeebeClusterList.Items[0], statefulSet, r.Scheme)
+
+								//Set Ownership
+								ctrl.SetControllerReference(&zeebeClusterList.Items[0], statefulSet, r.Scheme)
+								return nil
 							})
 							if err != nil {
 								r.Log.Error(err, "Error setting up owner for statefulset")
 							}
 						}
-					}
-				} else {
-					r.Log.Info(">> No Zeebe Cluster matching label: " + statefulSet.GetLabels()["app.kubernetes.io/instance"])
-				}
+						if len(zeebeClusterList.Items[0].Spec.StatefulSetName) == 0 {
+							ctrl.CreateOrUpdate(context.Background(), r.Client, &zeebeClusterList.Items[0], func() error {
 
-				return nil
-
-			}),
-		}).
-		Watches(&source.Kind{Type: &coreV1.Service{}}, &handler.EnqueueRequestsFromMapFunc{
-			ToRequests: handler.ToRequestsFunc(func(obj handler.MapObject) []ctrl.Request {
-				service, ok := obj.Object.(*coreV1.Service)
-				if !ok {
-					r.Log.Info("ERROR: unexpected type")
-				}
-
-				r.Log.Info("Service watch: " + service.Name)
-				var zeebeClusterList zeebev1.ZeebeClusterList
-				//, client.MatchingFields{"metadata.name" :service.GetLabels()["app.kubernetes.io/instance"]}
-				if err := r.List(context.Background(), &zeebeClusterList); err != nil {
-					r.Log.Info("unable to get zeebe clusters for statefulset", "statefulset", obj.Meta.GetName())
-					return nil
-				}
-				if len(zeebeClusterList.Items) == 1 {
-					if zeebeClusterList.Items[0].Name == service.GetLabels()["app.kubernetes.io/instance"] {
-						if zeebeClusterList.Items[0].OwnerReferences == nil {
-							_, err := ctrl.CreateOrUpdate(context.Background(), r.Client, service, func() error {
-								r.Log.Info("Zeebe Cluster found, updating service ownership ", "cluster", zeebeClusterList.Items[0].Name)
-								return ctrl.SetControllerReference(&zeebeClusterList.Items[0], service, r.Scheme)
+								//Set Ownership
+								zeebeClusterList.Items[0].Spec.StatefulSetName = statefulSet.Name
+								return nil
 							})
 							if err != nil {
-								r.Log.Error(err, "Error setting up owner for service")
+								r.Log.Error(err, "Error assigning statefulset to cluster")
 							}
+							res := make([]ctrl.Request, 1)
+							res[0].Name = zeebeClusterList.Items[0].Name
+							res[0].Namespace = zeebeClusterList.Items[0].Namespace
+
+							return res
 						}
+
 					}
-				} else {
-					r.Log.Info(">> No Zeebe Cluster matching label: " + service.GetLabels()["app.kubernetes.io/instance"])
 				}
 
 				return nil
 
 			}),
 		}).
-		Watches(&source.Kind{Type: &coreV1.ConfigMap{}}, &handler.EnqueueRequestsFromMapFunc{
-			ToRequests: handler.ToRequestsFunc(func(obj handler.MapObject) []ctrl.Request {
-				service, ok := obj.Object.(*coreV1.ConfigMap)
-				if !ok {
-					r.Log.Info("ERROR: unexpected type")
-				}
-
-				r.Log.Info("ConfigMap watch: " + service.Name)
-
-				var zeebeClusterList zeebev1.ZeebeClusterList
-				if err := r.List(context.Background(), &zeebeClusterList); err != nil {
-					r.Log.Info("unable to get zeebe clusters for configMap", "configMap", obj.Meta.GetName())
-					return nil
-				}
-
-				if len(zeebeClusterList.Items) == 1 {
-					if zeebeClusterList.Items[0].Name == service.GetLabels()["app.kubernetes.io/instance"] {
-						if zeebeClusterList.Items[0].OwnerReferences == nil {
-							_, err := ctrl.CreateOrUpdate(context.Background(), r.Client, service, func() error {
-								r.Log.Info("Zeebe Cluster found, updating ConfigMap ownership ", "cluster", zeebeClusterList.Items[0].Name)
-								return ctrl.SetControllerReference(&zeebeClusterList.Items[0], service, r.Scheme)
-							})
-							if err != nil {
-								r.Log.Error(err, "Error setting up owner for configMap")
-							}
-						}
-					}
-				} else {
-					r.Log.Info(">> No Zeebe Cluster matching label: " + service.GetLabels()["app.kubernetes.io/instance"])
-				}
-
-				return nil
-
-			}),
-		}).
+		//Watches(&source.Kind{Type: &coreV1.Service{}}, &handler.EnqueueRequestsFromMapFunc{
+		//	ToRequests: handler.ToRequestsFunc(func(obj handler.MapObject) []ctrl.Request {
+		//		service, ok := obj.Object.(*coreV1.Service)
+		//		if !ok {
+		//			r.Log.Info("ERROR: unexpected type")
+		//		}
+		//
+		//		var zeebeClusterList zeebev1.ZeebeClusterList
+		//		//, client.MatchingFields{"metadata.name" :service.GetLabels()["app.kubernetes.io/instance"]}
+		//		if err := r.List(context.Background(), &zeebeClusterList); err != nil {
+		//			r.Log.Info("unable to get zeebe clusters for statefulset", "statefulset", obj.Meta.GetName())
+		//			return nil
+		//		}
+		//		if len(zeebeClusterList.Items) == 1 {
+		//			if zeebeClusterList.Items[0].Name == service.GetLabels()["app.kubernetes.io/instance"] {
+		//				if zeebeClusterList.Items[0].OwnerReferences == nil {
+		//					_, err := ctrl.CreateOrUpdate(context.Background(), r.Client, service, func() error {
+		//						r.Log.Info("Zeebe Cluster found, updating service ownership ", "cluster", zeebeClusterList.Items[0].Name)
+		//						return ctrl.SetControllerReference(&zeebeClusterList.Items[0], service, r.Scheme)
+		//					})
+		//					if err != nil {
+		//						r.Log.Error(err, "Error setting up owner for service")
+		//					}
+		//				}
+		//			}
+		//		}
+		//
+		//		return nil
+		//
+		//	}),
+		//}).
+		//Watches(&source.Kind{Type: &coreV1.ConfigMap{}}, &handler.EnqueueRequestsFromMapFunc{
+		//	ToRequests: handler.ToRequestsFunc(func(obj handler.MapObject) []ctrl.Request {
+		//		service, ok := obj.Object.(*coreV1.ConfigMap)
+		//		if !ok {
+		//			r.Log.Info("ERROR: unexpected type")
+		//		}
+		//
+		//		var zeebeClusterList zeebev1.ZeebeClusterList
+		//		if err := r.List(context.Background(), &zeebeClusterList); err != nil {
+		//			r.Log.Info("unable to get zeebe clusters for configMap", "configMap", obj.Meta.GetName())
+		//			return nil
+		//		}
+		//
+		//		if len(zeebeClusterList.Items) == 1 {
+		//			if zeebeClusterList.Items[0].Name == service.GetLabels()["app.kubernetes.io/instance"] {
+		//				if zeebeClusterList.Items[0].OwnerReferences == nil {
+		//					_, err := ctrl.CreateOrUpdate(context.Background(), r.Client, service, func() error {
+		//						r.Log.Info("Zeebe Cluster found, updating ConfigMap ownership ", "cluster", zeebeClusterList.Items[0].Name)
+		//						return ctrl.SetControllerReference(&zeebeClusterList.Items[0], service, r.Scheme)
+		//					})
+		//					if err != nil {
+		//						r.Log.Error(err, "Error setting up owner for configMap")
+		//					}
+		//				}
+		//			}
+		//		}
+		//
+		//		return nil
+		//
+		//	}),
+		//}).
 		Complete(r)
 }
 
@@ -344,6 +424,32 @@ func ignoreNotFound(err error) error {
 		return nil
 	}
 	return err
+}
+
+func setCondition(conds *[]zeebev1.StatusCondition, targetCond zeebev1.StatusCondition) {
+	var outCond *zeebev1.StatusCondition
+	for i, cond := range *conds {
+		if cond.Type == targetCond.Type {
+			outCond = &(*conds)[i]
+			break
+		}
+	}
+	if outCond == nil {
+		*conds = append(*conds, targetCond)
+		outCond = &(*conds)[len(*conds)-1]
+		outCond.LastTransitionTime = metav1.Now()
+	} else {
+		lastState := outCond.Status
+		lastTrans := outCond.LastTransitionTime
+		*outCond = targetCond
+		if outCond.Status != lastState {
+			outCond.LastTransitionTime = metav1.Now()
+		} else {
+			outCond.LastTransitionTime = lastTrans
+		}
+	}
+
+	outCond.LastProbeTime = metav1.Now()
 }
 
 func ownedByOther(obj metav1.Object, apiVersion schema.GroupVersion, kind, name string) *metav1.OwnerReference {

@@ -30,9 +30,6 @@ rules:
   - ""
   resources:
   - configmaps
-  - events
-  - namespaces
-  - secrets
   - services
   verbs:
   - create
