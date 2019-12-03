@@ -14,7 +14,7 @@ spec:
     shortNames:
     - zb
     singular: zeebecluster
-  scope: Cluster
+  scope: namespaced
   subresources:
     status: {}
   validation:
@@ -40,8 +40,6 @@ spec:
               description: 'INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
                 Important: Run "make" to regenerate code after modifying this file'
               type: string
-          required:
-          - statefulSetName
           type: object
         status:
           description: ZeebeClusterStatus defines the observed state of ZeebeCluster
