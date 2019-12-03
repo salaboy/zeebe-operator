@@ -40,7 +40,7 @@ type ZeebeClusterStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=namespaced,path=zeebeclusters,shortName=zb
+// +kubebuilder:resource:scope=Namespaced,path=zeebeclusters,shortName=zb
 // ZeebeCluster is the Schema for the zeebeclusters API
 type ZeebeCluster struct {
 	metav1.TypeMeta   `json:",inline"`
