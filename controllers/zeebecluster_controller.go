@@ -172,6 +172,10 @@ func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace st
 // +kubebuilder:rbac:groups=apps,resources=statefulsets;deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=statefulsets/status;deployments/status,verbs=get
 
+// CRUD tekton: tasks / taskruns
+// +kubebuilder:rbac:groups=tekton.dev,resources=tasks;taskruns;pipelineresources,verbs=get;list;watch;create;update;patch;delete
+
+
 func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	log := r.Log.WithValues("zeebecluster", req.NamespacedName)
