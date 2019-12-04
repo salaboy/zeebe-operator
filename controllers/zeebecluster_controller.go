@@ -64,7 +64,7 @@ func (p *PipelineRunner) checkForTask(name string) bool {
 }
 
 func (p *PipelineRunner) initPipelineRunner(namespace string) {
-	log := p.Log.WithValues("zeebecluster", namespace)
+	log := p.Log.WithValues("pipelineresource", namespace)
 	//@TODO:  Do as initialization of the Operator ..
 	pipelineResource := builder.PipelineResource("zeebe-base-chart", namespace,
 		builder.PipelineResourceSpec(v1alpha1.PipelineResourceType("git"),
@@ -77,8 +77,8 @@ func (p *PipelineRunner) initPipelineRunner(namespace string) {
 }
 
 func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeCluster zeebev1.ZeebeCluster, r ZeebeClusterReconciler) {
-	log := p.Log.WithValues("zeebecluster", namespace)
-	task := builder.Task("install-task-"+zeebeCluster.Name, zeebeCluster.Namespace,
+	log := p.Log.WithValues("createTaskAndRun", namespace)
+	task := builder.Task("install-task-"+zeebeCluster.Name, namespace,
 		builder.TaskSpec(
 			builder.TaskInputs(builder.InputsResource("zeebe-base-chart", "git")),
 			builder.Step("clone-base-helm-chart", "gcr.io/jenkinsxio/builder-go:2.0.1028-359",
@@ -97,7 +97,7 @@ func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeClus
 
 	log.Info("> Creating Task: ", "task", task)
 
-	taskRun := builder.TaskRun("install-task-run-"+zeebeCluster.Name, zeebeCluster.Namespace,
+	taskRun := builder.TaskRun("install-task-run-"+zeebeCluster.Name, namespace,
 		builder.TaskRunSpec(
 			builder.TaskRunServiceAccountName("pipelinerunner"),
 			builder.TaskRunDeprecatedServiceAccount("pipelinerunner", "pipelinerunner"), // This require a SA being created for it to run
