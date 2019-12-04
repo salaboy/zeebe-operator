@@ -53,6 +53,7 @@ type PipelineRunner struct {
 }
 
 var pipelinesNamespace = os.Getenv("PIPELINES_NAMESPACE") // This is related to the Role, RB, and SA to run pipelines
+var pipelinesServiceAccountName = os.Getenv("PIPELINES_SA")
 
 func (p *PipelineRunner) checkForTask(name string) bool {
 	options := metav1.GetOptions{}
@@ -99,8 +100,8 @@ func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeClus
 
 	taskRun := builder.TaskRun("install-task-run-"+zeebeCluster.Name, namespace,
 		builder.TaskRunSpec(
-			builder.TaskRunServiceAccountName("pipelinerunner"),
-			builder.TaskRunDeprecatedServiceAccount("pipelinerunner", "pipelinerunner"), // This require a SA being created for it to run
+			builder.TaskRunServiceAccountName(pipelinesServiceAccountName),
+			builder.TaskRunDeprecatedServiceAccount(pipelinesServiceAccountName, pipelinesServiceAccountName), // This require a SA being created for it to run
 
 			builder.TaskRunTaskRef("install-task-"+zeebeCluster.Name),
 			builder.TaskRunInputs(builder.TaskRunInputsResource("zeebe-base-chart",
