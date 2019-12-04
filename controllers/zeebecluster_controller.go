@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -51,7 +52,7 @@ type PipelineRunner struct {
 	Log    logr.Logger
 }
 
-var pipelinesNamespace = "default" // This is related to the Role, RB, and SA to run pipelines
+var pipelinesNamespace = os.Getenv("PIPELINES_NAMESPACE") // This is related to the Role, RB, and SA to run pipelines
 
 func (p *PipelineRunner) checkForTask(name string) bool {
 	options := metav1.GetOptions{}
