@@ -9,7 +9,8 @@ image:
 
 # define environment variables here as a map of key: value
 env:
-
+  PIPELINES_NAMESPACE: "default"
+  PIPELINES_SA: "tekton-bot"
 # enable this flag to use knative serve to deploy the app
 knativeDeploy: false
 
@@ -41,6 +42,3 @@ readinessProbe:
   timeoutSeconds: 1
 tekton:
   enabled: true
-  env:
-    PIPELINES_NAMESPACE: "default"
-    PIPELINES_SA: "tekton-bot"
