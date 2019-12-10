@@ -182,14 +182,15 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	ctx := context.Background()
 	log := r.Log.WithValues("zeebecluster", req.NamespacedName)
 	var zeebeCluster zeebev1.ZeebeCluster
+	req.Namespace = pipelinesNamespace
 	if err := r.Get(ctx, req.NamespacedName, &zeebeCluster); err != nil {
 		// it might be not found if this is a delete request
 		if ignoreNotFound(err) == nil {
 			log.Info("Hey there.. deleting cluster happened: " + req.NamespacedName.Name) // if there is no cluster.. let's make sure that we delete the helm release
-			r.pr.createTaskAndTaskRunDelete(req.NamespacedName.Name, "default")
+			r.pr.createTaskAndTaskRunDelete(req.NamespacedName.Name, req.Namespace)
 
 			namespace := new(coreV1.Namespace)
-			namespace.SetName(req.NamespacedName.Name)
+			namespace.SetName(req.Namespace)
 
 			if err := r.Delete(ctx,  namespace, client.PropagationPolicy(metav1.DeletePropagationBackground)); ignoreNotFound(err) != nil {
 				log.Error(err, "unable to delete  namespace", "namespace", namespace)
@@ -317,15 +318,16 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 
 				var zeebeClusterList zeebev1.ZeebeClusterList
-				//client.MatchingLabels{"name" :statefulSet.GetLabels()["app.kubernetes.io/instance"] }
 				if err := r.List(context.Background(), &zeebeClusterList); err != nil {
 					r.Log.Info("unable to get zeebe clusters for statefulset", "statefulset", obj.Meta.GetName())
 					return nil
 				}
 				if len(zeebeClusterList.Items) == 1 {
 					if zeebeClusterList.Items[0].Name == statefulSet.GetLabels()["app.kubernetes.io/instance"] {
+
+						// I need to set up the ownership to be notified about the changes on the replicas
 						if statefulSet.OwnerReferences == nil {
-							r.Log.Info("Zeebe Cluster found, updating statefulset ownership ", "cluster", zeebeClusterList.Items[0].Name)
+							r.Log.Info("Zeebe Cluster found, updating statefulset ownership ", "cluster", zeebeClusterList.Items[0].Name, "namespace", zeebeClusterList.Items[0].Namespace)
 							_, err := ctrl.CreateOrUpdate(context.Background(), r.Client, statefulSet, func() error {
 
 								//Set Ownership
@@ -333,10 +335,14 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 								return nil
 							})
 							if err != nil {
-								r.Log.Error(err, "Error setting up owner for statefulset")
+								r.Log.Error(err, "Error setting up owner for statefulset", "cluster",zeebeClusterList.Items[0].Name, "namespace", zeebeClusterList.Items[0].Namespace )
 							}
 						}
 						if len(zeebeClusterList.Items[0].Spec.StatefulSetName) == 0 {
+							r.Log.Info("Zeebe Cluster found, updating statefulset reference ",
+								"cluster", zeebeClusterList.Items[0].Name,
+												"namespace", zeebeClusterList.Items[0].Namespace,
+												"statefulSet Name", statefulSet.Name)
 							ctrl.CreateOrUpdate(context.Background(), r.Client, &zeebeClusterList.Items[0], func() error {
 
 								//Set Ownership
@@ -346,11 +352,12 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 							if err != nil {
 								r.Log.Error(err, "Error assigning statefulset to cluster")
 							}
-							res := make([]ctrl.Request, 1)
-							res[0].Name = zeebeClusterList.Items[0].Name
-							res[0].Namespace = zeebeClusterList.Items[0].Namespace
+							//res := make([]ctrl.Request, 1)
+							//res[0].Name = zeebeClusterList.Items[0].Name
+							//res[0].Namespace = zeebeClusterList.Items[0].Namespace
 
-							return res
+							//return res
+							return nil
 						}
 
 					}

@@ -28,7 +28,7 @@ resources:
   requests:
     cpu: 80m
     memory: 128Mi
-probePath: /
+probePath: /metrics
 livenessProbe:
   initialDelaySeconds: 60
   periodSeconds: 10
@@ -41,3 +41,6 @@ readinessProbe:
   timeoutSeconds: 1
 tekton:
   enabled: true
+  env:
+    PIPELINES_NAMESPACE: "default"
+    PIPELINES_SA: "tekton-bot"
