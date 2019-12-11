@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+
 	"knative.dev/pkg/apis"
 	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -131,7 +132,7 @@ func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeClus
 	return p.WaitForTaskRunState("install-task-run-"+zeebeCluster.Name, TaskRunSucceed("install-task-run-"+zeebeCluster.Name), "TaskRunSucceed")
 }
 
-func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace string)   error {
+func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace string) error {
 	log := p.Log.WithValues("zeebecluster", namespace)
 	task := builder.Task("delete-task-"+release, namespace,
 		builder.TaskSpec(
@@ -166,7 +167,7 @@ func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace st
 	return p.WaitForTaskRunState("delete-task-run-"+release, TaskRunSucceed("delete-task-run-"+release), "TaskRunSucceed")
 }
 
-func (p *PipelineRunner)  WaitForTaskRunState( name string, inState TaskRunStateFn, desc string) error {
+func (p *PipelineRunner) WaitForTaskRunState(name string, inState TaskRunStateFn, desc string) error {
 	return wait.PollImmediate(interval, timeout, func() (bool, error) {
 		r, err := p.tekton.TektonV1alpha1().TaskRuns(pipelinesNamespace).Get(name, metav1.GetOptions{})
 		p.Log.Info("> Checking for Task Run Succeed! " + name)
@@ -176,6 +177,20 @@ func (p *PipelineRunner)  WaitForTaskRunState( name string, inState TaskRunState
 		return inState(r)
 	})
 
+}
+
+func (p *PipelineRunner) cleanUpTaskAndTaskRun(clusterName string) {
+	options := new(metav1.DeleteOptions)
+	errorTask := p.tekton.TektonV1alpha1().Tasks(pipelinesNamespace).Delete("delete-task-"+clusterName, options)
+
+	if errorTask != nil {
+		p.Log.Error(errorTask, "Error Deleting task", "task", "delete-task-"+clusterName)
+	}
+	errorTaskRun := p.tekton.TektonV1alpha1().TaskRuns(pipelinesNamespace).Delete("delete-task-run-"+clusterName, options)
+
+	if errorTaskRun != nil {
+		p.Log.Error(errorTaskRun, "Error Deleting taskRun", "taskrun", "delete-task-run-"+clusterName)
+	}
 }
 
 // TaskRunSucceed provides a poll condition function that checks if the TaskRun
@@ -234,7 +249,6 @@ func TaskRunFailed(name string) TaskRunStateFn {
 // CRUD tekton: tasks / taskruns
 // +kubebuilder:rbac:groups=tekton.dev,resources=tasks;taskruns;pipelineresources,verbs=get;list;watch;create;update;patch;delete
 
-
 func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	log := r.Log.WithValues(">>> Reconcile: zeebecluster", req.NamespacedName)
@@ -244,7 +258,7 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		// it might be not found if this is a delete request
 		if ignoreNotFound(err) == nil {
 			log.Info("Hey there.. deleting cluster happened: " + req.NamespacedName.Name)
-			if !r.pr.checkForTask("delete-task-"+req.NamespacedName.Name) {
+			if !r.pr.checkForTask("delete-task-" + req.NamespacedName.Name) {
 				r.pr.createTaskAndTaskRunDelete(req.NamespacedName.Name, req.Namespace)
 			}
 
@@ -271,17 +285,17 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		return ctrl.Result{}, err
 	}
 
-
-
 	var clusterName = zeebeCluster.Name
-
+	// Clean up in case that there was an old cluster with the same name
+	if !r.pr.checkForTask("delete-task-" + clusterName) {
+		r.pr.cleanUpTaskAndTaskRun(clusterName)
+	}
 	// Check if tasks needs to be created .. if not avoid
-	if !r.pr.checkForTask("install-task-"+clusterName) { // If the task was created before avoid creating it again
+	if !r.pr.checkForTask("install-task-" + clusterName) { // If the task was created before avoid creating it again
 		// Check if pipeline runner was initialized before
 		r.pr.initPipelineRunner(pipelinesNamespace)
 
 		// I need to find a way to understand when I need to create a new task run, if needed (maybe for update use cases)
-		r.pr.createTaskAndTaskRunInstall(pipelinesNamespace, zeebeCluster, *r)
 		setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
 			Type:    "Installing",
 			Status:  zeebev1.ConditionStatusUnhealthy,
@@ -289,6 +303,8 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 			Message: "Zeebe Cluster Being Installed",
 		})
 		zeebeCluster.Status.StatusName = "Installing"
+		r.pr.createTaskAndTaskRunInstall(pipelinesNamespace, zeebeCluster, *r)
+
 	}
 
 	zeebeCluster.Status.ClusterName = clusterName
@@ -316,16 +332,16 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 			setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
 				Type:    "Ready",
 				Status:  zeebev1.ConditionStatusHealthy,
-				Reason:  fmt.Sprintf("%s%d/%d", "Replicas ",statefulSet.Status.ReadyReplicas,statefulSet.Status.Replicas),
+				Reason:  fmt.Sprintf("%s%d/%d", "Replicas ", statefulSet.Status.ReadyReplicas, statefulSet.Status.Replicas),
 				Message: "Zeebe Cluster Ready",
 			})
 			zeebeCluster.Status.StatusName = "Ready"
 
-		}else {
+		} else {
 			setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
 				Type:    "Pending",
 				Status:  zeebev1.ConditionStatusUnhealthy,
-				Reason:  fmt.Sprintf("%s%d/%d", "Replicas ",statefulSet.Status.ReadyReplicas,statefulSet.Status.Replicas),
+				Reason:  fmt.Sprintf("%s%d/%d", "Replicas ", statefulSet.Status.ReadyReplicas, statefulSet.Status.Replicas),
 				Message: "Zeebe Cluster Starting",
 			})
 			zeebeCluster.Status.StatusName = "Pending"
@@ -382,7 +398,7 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 
 				for i := 0; i < len(zeebeClusterList.Items); i++ {
-					r.Log.Info("Comparing: clusterName =  " + zeebeClusterList.Items[i].Name + " -> statefulSet labels: " + statefulSet.GetLabels()["app.kubernetes.io/instance"]  )
+					r.Log.Info("Comparing: clusterName =  " + zeebeClusterList.Items[i].Name + " -> statefulSet labels: " + statefulSet.GetLabels()["app.kubernetes.io/instance"])
 					if zeebeClusterList.Items[i].Name == statefulSet.GetLabels()["app.kubernetes.io/instance"] {
 						// I need to set up the ownership to be notified about the changes on the replicas
 						if statefulSet.OwnerReferences == nil {
@@ -424,7 +440,6 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 					}
 				}
-
 
 				return nil
 
