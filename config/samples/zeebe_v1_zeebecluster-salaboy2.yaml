@@ -1,0 +1,6 @@
+apiVersion: zeebe.zeebe.io/v1
+kind: ZeebeCluster
+metadata:
+  name: zeebe-cluster-salaboy2
+spec:
+  statefulSetName: ""

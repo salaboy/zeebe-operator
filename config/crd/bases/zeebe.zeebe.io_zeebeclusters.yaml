@@ -6,6 +6,10 @@ metadata:
   creationTimestamp: null
   name: zeebeclusters.zeebe.zeebe.io
 spec:
+  additionalPrinterColumns:
+  - JSONPath: .status.statusName
+    name: Status
+    type: string
   group: zeebe.zeebe.io
   names:
     kind: ZeebeCluster

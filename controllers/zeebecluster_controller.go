@@ -29,12 +29,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"knative.dev/pkg/apis"
 	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+	"time"
 	zeebev1 "zeebe-operator/api/v1"
 )
 
@@ -52,12 +55,20 @@ type PipelineRunner struct {
 	Log    logr.Logger
 }
 
+// TaskRunStateFn is a condition function on TaskRun used polling functions
+type TaskRunStateFn func(r *v1alpha1.TaskRun) (bool, error)
+
+const (
+	interval = 1 * time.Second
+	timeout  = 10 * time.Minute
+)
+
 var pipelinesNamespace = os.Getenv("PIPELINES_NAMESPACE") // This is related to the Role, RB, and SA to run pipelines
 var pipelinesServiceAccountName = os.Getenv("PIPELINES_SA")
 
 func (p *PipelineRunner) checkForTask(name string) bool {
 	options := metav1.GetOptions{}
-	t, err := p.tekton.TektonV1alpha1().Tasks(pipelinesNamespace).Get("install-task-"+name, options)
+	t, err := p.tekton.TektonV1alpha1().Tasks(pipelinesNamespace).Get(name, options)
 	if err == nil && t != nil {
 		return true
 	}
@@ -77,7 +88,7 @@ func (p *PipelineRunner) initPipelineRunner(namespace string) {
 	//@TODO: END
 }
 
-func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeCluster zeebev1.ZeebeCluster, r ZeebeClusterReconciler) {
+func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeCluster zeebev1.ZeebeCluster, r ZeebeClusterReconciler) error {
 	log := p.Log.WithValues("createTaskAndRun", namespace)
 	task := builder.Task("install-task-"+zeebeCluster.Name, namespace,
 		builder.TaskSpec(
@@ -117,9 +128,10 @@ func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeClus
 		log.Error(errorTaskRun, "Error Creating taskRun")
 	}
 
+	return p.WaitForTaskRunState("install-task-run-"+zeebeCluster.Name, TaskRunSucceed("install-task-run-"+zeebeCluster.Name), "TaskRunSucceed")
 }
 
-func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace string) {
+func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace string)   error {
 	log := p.Log.WithValues("zeebecluster", namespace)
 	task := builder.Task("delete-task-"+release, namespace,
 		builder.TaskSpec(
@@ -151,6 +163,51 @@ func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace st
 		log.Error(errorTaskRun, "Error Creating taskRun")
 	}
 
+	return p.WaitForTaskRunState("delete-task-run-"+release, TaskRunSucceed("delete-task-run-"+release), "TaskRunSucceed")
+}
+
+func (p *PipelineRunner)  WaitForTaskRunState( name string, inState TaskRunStateFn, desc string) error {
+	return wait.PollImmediate(interval, timeout, func() (bool, error) {
+		r, err := p.tekton.TektonV1alpha1().TaskRuns(pipelinesNamespace).Get(name, metav1.GetOptions{})
+		p.Log.Info("> Checking for Task Run Succeed! " + name)
+		if err != nil {
+			return true, err
+		}
+		return inState(r)
+	})
+
+}
+
+// TaskRunSucceed provides a poll condition function that checks if the TaskRun
+// has successfully completed.
+func TaskRunSucceed(name string) TaskRunStateFn {
+	return func(tr *v1alpha1.TaskRun) (bool, error) {
+		c := tr.Status.GetCondition(apis.ConditionSucceeded)
+		if c != nil {
+			if c.Status == coreV1.ConditionTrue {
+				return true, nil
+			} else if c.Status == coreV1.ConditionFalse {
+				return true, fmt.Errorf("task run %q failed!", name)
+			}
+		}
+		return false, nil
+	}
+}
+
+// TaskRunFailed provides a poll condition function that checks if the TaskRun
+// has failed.
+func TaskRunFailed(name string) TaskRunStateFn {
+	return func(tr *v1alpha1.TaskRun) (bool, error) {
+		c := tr.Status.GetCondition(apis.ConditionSucceeded)
+		if c != nil {
+			if c.Status == coreV1.ConditionTrue {
+				return true, fmt.Errorf("task run %q succeeded!", name)
+			} else if c.Status == coreV1.ConditionFalse {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 }
 
 /* Reconcile should do:
@@ -180,23 +237,17 @@ func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace st
 
 func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
-	log := r.Log.WithValues("zeebecluster", req.NamespacedName)
+	log := r.Log.WithValues(">>> Reconcile: zeebecluster", req.NamespacedName)
 	var zeebeCluster zeebev1.ZeebeCluster
 	req.Namespace = pipelinesNamespace
 	if err := r.Get(ctx, req.NamespacedName, &zeebeCluster); err != nil {
 		// it might be not found if this is a delete request
 		if ignoreNotFound(err) == nil {
-			log.Info("Hey there.. deleting cluster happened: " + req.NamespacedName.Name) // if there is no cluster.. let's make sure that we delete the helm release
-			r.pr.createTaskAndTaskRunDelete(req.NamespacedName.Name, req.Namespace)
-
-			namespace := new(coreV1.Namespace)
-			namespace.SetName(req.Namespace)
-
-			if err := r.Delete(ctx,  namespace, client.PropagationPolicy(metav1.DeletePropagationBackground)); ignoreNotFound(err) != nil {
-				log.Error(err, "unable to delete  namespace", "namespace", namespace)
-			} else {
-				log.V(0).Info("namespace deleted", "namespace", namespace)
+			log.Info("Hey there.. deleting cluster happened: " + req.NamespacedName.Name)
+			if !r.pr.checkForTask("delete-task-"+req.NamespacedName.Name) {
+				r.pr.createTaskAndTaskRunDelete(req.NamespacedName.Name, req.Namespace)
 			}
+
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "unable to fetch cluster")
@@ -225,12 +276,19 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	var clusterName = zeebeCluster.Name
 
 	// Check if tasks needs to be created .. if not avoid
-	if !r.pr.checkForTask(clusterName) { // If the task was created before avoid creating it again
+	if !r.pr.checkForTask("install-task-"+clusterName) { // If the task was created before avoid creating it again
 		// Check if pipeline runner was initialized before
 		r.pr.initPipelineRunner(pipelinesNamespace)
 
 		// I need to find a way to understand when I need to create a new task run, if needed (maybe for update use cases)
 		r.pr.createTaskAndTaskRunInstall(pipelinesNamespace, zeebeCluster, *r)
+		setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
+			Type:    "Installing",
+			Status:  zeebev1.ConditionStatusUnhealthy,
+			Reason:  "Running Pipelines to install Helm Charts..",
+			Message: "Zeebe Cluster Being Installed",
+		})
+		zeebeCluster.Status.StatusName = "Installing"
 	}
 
 	zeebeCluster.Status.ClusterName = clusterName
@@ -322,31 +380,35 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					r.Log.Info("unable to get zeebe clusters for statefulset", "statefulset", obj.Meta.GetName())
 					return nil
 				}
-				if len(zeebeClusterList.Items) == 1 {
-					if zeebeClusterList.Items[0].Name == statefulSet.GetLabels()["app.kubernetes.io/instance"] {
 
+				for i := 0; i < len(zeebeClusterList.Items); i++ {
+					r.Log.Info("Comparing: clusterName =  " + zeebeClusterList.Items[i].Name + " -> statefulSet labels: " + statefulSet.GetLabels()["app.kubernetes.io/instance"]  )
+					if zeebeClusterList.Items[i].Name == statefulSet.GetLabels()["app.kubernetes.io/instance"] {
 						// I need to set up the ownership to be notified about the changes on the replicas
 						if statefulSet.OwnerReferences == nil {
-							r.Log.Info("Zeebe Cluster found, updating statefulset ownership ", "cluster", zeebeClusterList.Items[0].Name, "namespace", zeebeClusterList.Items[0].Namespace)
+							r.Log.Info("Zeebe Cluster found, updating statefulset ownership ",
+								"cluster", zeebeClusterList.Items[i].Name,
+								"namespace", zeebeClusterList.Items[i].Namespace)
 							_, err := ctrl.CreateOrUpdate(context.Background(), r.Client, statefulSet, func() error {
 
 								//Set Ownership
-								ctrl.SetControllerReference(&zeebeClusterList.Items[0], statefulSet, r.Scheme)
+								ctrl.SetControllerReference(&zeebeClusterList.Items[i], statefulSet, r.Scheme)
 								return nil
 							})
 							if err != nil {
-								r.Log.Error(err, "Error setting up owner for statefulset", "cluster",zeebeClusterList.Items[0].Name, "namespace", zeebeClusterList.Items[0].Namespace )
+								r.Log.Error(err, "Error setting up owner for statefulset", "cluster", zeebeClusterList.Items[0].Name, "namespace", zeebeClusterList.Items[0].Namespace)
 							}
 						}
+
 						if len(zeebeClusterList.Items[0].Spec.StatefulSetName) == 0 {
 							r.Log.Info("Zeebe Cluster found, updating statefulset reference ",
-								"cluster", zeebeClusterList.Items[0].Name,
-												"namespace", zeebeClusterList.Items[0].Namespace,
-												"statefulSet Name", statefulSet.Name)
-							ctrl.CreateOrUpdate(context.Background(), r.Client, &zeebeClusterList.Items[0], func() error {
+								"cluster", zeebeClusterList.Items[i].Name,
+								"namespace", zeebeClusterList.Items[i].Namespace,
+								"statefulSet Name", statefulSet.Name)
+							ctrl.CreateOrUpdate(context.Background(), r.Client, &zeebeClusterList.Items[i], func() error {
 
 								//Set Ownership
-								zeebeClusterList.Items[0].Spec.StatefulSetName = statefulSet.Name
+								zeebeClusterList.Items[i].Spec.StatefulSetName = statefulSet.Name
 								return nil
 							})
 							if err != nil {
@@ -362,6 +424,7 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 					}
 				}
+
 
 				return nil
 
