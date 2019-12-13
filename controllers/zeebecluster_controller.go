@@ -66,6 +66,7 @@ const (
 
 var pipelinesNamespace = os.Getenv("PIPELINES_NAMESPACE") // This is related to the Role, RB, and SA to run pipelines
 var pipelinesServiceAccountName = os.Getenv("PIPELINES_SA")
+var builderImage = os.Getenv("BUILDER_IMAGE") //old one gcr.io/jenkinsxio/builder-go:2.0.1028-359
 
 func (p *PipelineRunner) checkForTask(name string) bool {
 	options := metav1.GetOptions{}
@@ -94,7 +95,7 @@ func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeClus
 	task := builder.Task("install-task-"+zeebeCluster.Name, namespace,
 		builder.TaskSpec(
 			builder.TaskInputs(builder.InputsResource("zeebe-base-chart", "git")),
-			builder.Step("clone-base-helm-chart", "gcr.io/jenkinsxio/builder-go:2.0.1028-359",
+			builder.Step("clone-base-helm-chart", builderImage,
 				builder.StepCommand("make", "-C", "/workspace/zeebe-base-chart/", "build", "install"),
 				builder.StepEnvVar("CLUSTER_NAME", zeebeCluster.Name),
 				builder.StepEnvVar("NAMESPACE", zeebeCluster.Name))))

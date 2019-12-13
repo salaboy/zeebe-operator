@@ -11,6 +11,7 @@ image:
 env:
   PIPELINES_NAMESPACE: "default"
   PIPELINES_SA: "tekton-bot"
+  BUILDER_IMAGE: "gcr.io/camunda-consulting-de/helm-builder:latest"
 # enable this flag to use knative serve to deploy the app
 knativeDeploy: false
 
