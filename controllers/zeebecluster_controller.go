@@ -345,18 +345,22 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 				})
 				zeebeCluster.Status.StatusName = fmt.Sprint("Pending ", statefulSet.Status.ReadyReplicas, "/", statefulSet.Status.Replicas)
 			}
+		} else {
+			setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
+				Type:    "Creating",
+				Status:  zeebev1.ConditionStatusUnhealthy,
+				Reason:  "Booting..",
+				Message: "Zeebe Cluster Being Created",
+			})
+			zeebeCluster.Status.StatusName = "Creating"
 		}
 
 	}
 
-	setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
-		Type:    "Creating",
-		Status:  zeebev1.ConditionStatusUnhealthy,
-		Reason:  "Booting..",
-		Message: "Zeebe Cluster Being Created",
-	})
 
-	zeebeCluster.Status.StatusName = "Creating"
+
+
+
 	if err := r.Status().Update(ctx, &zeebeCluster); err != nil {
 		log.Error(err, "unable to update cluster spec")
 		return ctrl.Result{}, err
