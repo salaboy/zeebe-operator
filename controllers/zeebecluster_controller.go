@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-logr/logr"
+	uuid2 "github.com/google/uuid"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	tekton "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
 	"github.com/tektoncd/pipeline/test/builder"
@@ -135,10 +136,11 @@ func (p *PipelineRunner) createTaskAndTaskRunInstall(namespace string, zeebeClus
 
 func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace string) error {
 	log := p.Log.WithValues("zeebecluster", namespace)
-	task := builder.Task("delete-task-"+release, namespace,
+	uuid, _ := uuid2.NewUUID()
+	task := builder.Task("delete-task-"+release+"-"+uuid.String(), namespace,
 		builder.TaskSpec(
 			builder.TaskInputs(builder.InputsResource("zeebe-base-chart", "git")),
-			builder.Step("clone-base-helm-chart", "gcr.io/jenkinsxio/builder-go:2.0.1028-359",
+			builder.Step("clone-base-helm-chart", builderImage,
 				builder.StepCommand("make", "-C", "/workspace/zeebe-base-chart/", "delete"),
 				builder.StepEnvVar("CLUSTER_NAME", release))))
 
@@ -154,7 +156,7 @@ func (p *PipelineRunner) createTaskAndTaskRunDelete(release string, namespace st
 			builder.TaskRunServiceAccountName("pipelinerunner"),
 			builder.TaskRunDeprecatedServiceAccount("pipelinerunner", "pipelinerunner"), // This require a SA being created for it to run
 
-			builder.TaskRunTaskRef("delete-task-"+release),
+			builder.TaskRunTaskRef("delete-task-"+release+"-"+uuid.String()),
 			builder.TaskRunInputs(builder.TaskRunInputsResource("zeebe-base-chart",
 				builder.TaskResourceBindingRef("zeebe-base-chart")))))
 
@@ -259,9 +261,8 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		// it might be not found if this is a delete request
 		if ignoreNotFound(err) == nil {
 			log.Info("Hey there.. deleting cluster happened: " + req.NamespacedName.Name)
-			if !r.pr.checkForTask("delete-task-" + req.NamespacedName.Name) {
-				r.pr.createTaskAndTaskRunDelete(req.NamespacedName.Name, req.Namespace)
-			}
+
+			r.pr.createTaskAndTaskRunDelete(req.NamespacedName.Name, req.Namespace)
 
 			return ctrl.Result{}, nil
 		}
@@ -287,77 +288,75 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	}
 
 	var clusterName = zeebeCluster.Name
-	// Clean up in case that there was an old cluster with the same name
-	if !r.pr.checkForTask("delete-task-" + clusterName) {
-		r.pr.cleanUpTaskAndTaskRun(clusterName)
-	}
+
 	// Check if tasks needs to be created .. if not avoid
 	if !r.pr.checkForTask("install-task-" + clusterName) { // If the task was created before avoid creating it again
 		// Check if pipeline runner was initialized before
 		r.pr.initPipelineRunner(pipelinesNamespace)
 
-		// I need to find a way to understand when I need to create a new task run, if needed (maybe for update use cases)
-		setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
-			Type:    "Installing",
-			Status:  zeebev1.ConditionStatusUnhealthy,
-			Reason:  "Running Pipelines to install Helm Charts..",
-			Message: "Zeebe Cluster Being Installed",
-		})
-		zeebeCluster.Status.StatusName = "Installing"
-		r.pr.createTaskAndTaskRunInstall(pipelinesNamespace, zeebeCluster, *r)
+		if err := r.pr.createTaskAndTaskRunInstall(pipelinesNamespace, zeebeCluster, *r); err != nil {
+			setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
+				Type:    "InstallationFailed",
+				Status:  zeebev1.ConditionStatusUnhealthy,
+				Reason:  "Installation Pipelines Failed",
+				Message: "Zeebe Cluster Installation Failed",
+			})
+			zeebeCluster.Status.StatusName = "FailedToInstall"
+		}
 
 	}
 
 	zeebeCluster.Status.ClusterName = clusterName
 
 	log.Info("> Zeebe Cluster Name: " + clusterName)
+	if zeebeCluster.Status.StatusName != "FailedToInstall" {
+		if len(zeebeCluster.Spec.StatefulSetName) > 0 {
+			var statefulSet appsV1.StatefulSet
+			var statefulSetNamespacedName types.NamespacedName
+			statefulSetNamespacedName.Name = zeebeCluster.Spec.StatefulSetName
+			statefulSetNamespacedName.Namespace = namespace.Name
+			if err := r.Get(ctx, statefulSetNamespacedName, &statefulSet); err != nil {
+				// it might be not found if this is a delete request
+				if ignoreNotFound(err) == nil {
+					log.Error(err, "Not Found! ")
+					return ctrl.Result{}, nil
+				}
+				log.Error(err, "unable to fetch cluster")
 
-	if len(zeebeCluster.Spec.StatefulSetName) > 0 {
-		var statefulSet appsV1.StatefulSet
-		var statefulSetNamespacedName types.NamespacedName
-		statefulSetNamespacedName.Name = zeebeCluster.Spec.StatefulSetName
-		statefulSetNamespacedName.Namespace = namespace.Name
-		if err := r.Get(ctx, statefulSetNamespacedName, &statefulSet); err != nil {
-			// it might be not found if this is a delete request
-			if ignoreNotFound(err) == nil {
-				log.Error(err, "Not Found! ")
-				return ctrl.Result{}, nil
+				return ctrl.Result{}, err
 			}
-			log.Error(err, "unable to fetch cluster")
+			r.Log.Info("Found StatefulSet replicas: ", "Replicas: ", statefulSet.Status.Replicas)
+			r.Log.Info("Found StatefulSet replicas: ", "readyReplicas: ", statefulSet.Status.ReadyReplicas)
+			if statefulSet.Status.ReadyReplicas == statefulSet.Status.Replicas {
+				setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
+					Type:    "Ready",
+					Status:  zeebev1.ConditionStatusHealthy,
+					Reason:  fmt.Sprintf("%s%d/%d", "Replicas ", statefulSet.Status.ReadyReplicas, statefulSet.Status.Replicas),
+					Message: "Zeebe Cluster Ready",
+				})
+				zeebeCluster.Status.StatusName = "Ready"
 
-			return ctrl.Result{}, err
+			} else {
+				setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
+					Type:    "Pending",
+					Status:  zeebev1.ConditionStatusUnhealthy,
+					Reason:  fmt.Sprintf("%s%d/%d", "Replicas ", statefulSet.Status.ReadyReplicas, statefulSet.Status.Replicas),
+					Message: "Zeebe Cluster Starting",
+				})
+				zeebeCluster.Status.StatusName = fmt.Sprint("Pending ", statefulSet.Status.ReadyReplicas, "/", statefulSet.Status.Replicas)
+			}
 		}
-		r.Log.Info("Found StatefulSet replicas: ", "Replicas: ", statefulSet.Status.Replicas)
-		r.Log.Info("Found StatefulSet replicas: ", "readyReplicas: ", statefulSet.Status.ReadyReplicas)
-		if statefulSet.Status.ReadyReplicas == statefulSet.Status.Replicas {
-			setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
-				Type:    "Ready",
-				Status:  zeebev1.ConditionStatusHealthy,
-				Reason:  fmt.Sprintf("%s%d/%d", "Replicas ", statefulSet.Status.ReadyReplicas, statefulSet.Status.Replicas),
-				Message: "Zeebe Cluster Ready",
-			})
-			zeebeCluster.Status.StatusName = "Ready"
 
-		} else {
-			setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
-				Type:    "Pending",
-				Status:  zeebev1.ConditionStatusUnhealthy,
-				Reason:  fmt.Sprintf("%s%d/%d", "Replicas ", statefulSet.Status.ReadyReplicas, statefulSet.Status.Replicas),
-				Message: "Zeebe Cluster Starting",
-			})
-			zeebeCluster.Status.StatusName = "Pending"
-		}
-	} else {
-
-		setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
-			Type:    "Creating",
-			Status:  zeebev1.ConditionStatusUnhealthy,
-			Reason:  "Booting..",
-			Message: "Zeebe Cluster Being Created",
-		})
-		zeebeCluster.Status.StatusName = "Creating"
 	}
 
+	setCondition(&zeebeCluster.Status.Conditions, zeebev1.StatusCondition{
+		Type:    "Creating",
+		Status:  zeebev1.ConditionStatusUnhealthy,
+		Reason:  "Booting..",
+		Message: "Zeebe Cluster Being Created",
+	})
+
+	zeebeCluster.Status.StatusName = "Creating"
 	if err := r.Status().Update(ctx, &zeebeCluster); err != nil {
 		log.Error(err, "unable to update cluster spec")
 		return ctrl.Result{}, err
