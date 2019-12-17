@@ -235,8 +235,8 @@ func TaskRunFailed(name string) TaskRunStateFn {
     4) update URL
 */
 
-// +kubebuilder:rbac:groups=zeebe.zeebe.io,resources=zeebeclusters,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=zeebe.zeebe.io,resources=zeebeclusters/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=zeebe.io,resources=zeebeclusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=zeebe.io,resources=zeebeclusters/status,verbs=get;update;patch
 
 // CRUD core: namespaces, events, secrets, services and configmaps
 // +kubebuilder:rbac:groups=core,resources=services;configmaps;namespaces,verbs=get;list;watch;create;update;patch;delete
@@ -307,7 +307,7 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	}
 
 	zeebeCluster.Status.ClusterName = clusterName
-
+	zeebeCluster.Spec.ServiceName = clusterName + "-zeebe"
 	log.Info("> Zeebe Cluster Name: " + clusterName)
 	if zeebeCluster.Status.StatusName != "FailedToInstall" {
 		if len(zeebeCluster.Spec.StatefulSetName) > 0 {
@@ -357,10 +357,6 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 
 	}
 
-
-
-
-
 	if err := r.Status().Update(ctx, &zeebeCluster); err != nil {
 		log.Error(err, "unable to update cluster spec")
 		return ctrl.Result{}, err
@@ -384,7 +380,6 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Scheme = mgr.GetScheme()
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&zeebev1.ZeebeCluster{}).
-
 		Owns(&coreV1.ConfigMap{}).
 		Owns(&coreV1.Service{}).
 		Owns(&appsV1.StatefulSet{}).

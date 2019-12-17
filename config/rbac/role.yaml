@@ -70,7 +70,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - zeebe.zeebe.io
+  - zeebe.io
   resources:
   - zeebeclusters
   verbs:
@@ -82,29 +82,9 @@ rules:
   - update
   - watch
 - apiGroups:
-  - zeebe.zeebe.io
+  - zeebe.io
   resources:
   - zeebeclusters/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - zeebe.zeebe.io
-  resources:
-  - zeebeprojects
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - zeebe.zeebe.io
-  resources:
-  - zeebeprojects/status
   verbs:
   - get
   - patch
