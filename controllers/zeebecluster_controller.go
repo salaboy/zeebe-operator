@@ -307,7 +307,7 @@ func (r *ZeebeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	}
 
 	zeebeCluster.Status.ClusterName = clusterName
-	zeebeCluster.Spec.ServiceName = clusterName + "-zeebe"
+
 	log.Info("> Zeebe Cluster Name: " + clusterName)
 	if zeebeCluster.Status.StatusName != "FailedToInstall" {
 		if len(zeebeCluster.Spec.StatefulSetName) > 0 {
@@ -423,17 +423,13 @@ func (r *ZeebeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 							ctrl.CreateOrUpdate(context.Background(), r.Client, &zeebeClusterList.Items[i], func() error {
 
 								//Set Ownership
+								zeebeClusterList.Items[i].Spec.ServiceName = zeebeClusterList.Items[i].Name + "-zeebe"
 								zeebeClusterList.Items[i].Spec.StatefulSetName = statefulSet.Name
 								return nil
 							})
 							if err != nil {
 								r.Log.Error(err, "Error assigning statefulset to cluster")
 							}
-							//res := make([]ctrl.Request, 1)
-							//res[0].Name = zeebeClusterList.Items[0].Name
-							//res[0].Namespace = zeebeClusterList.Items[0].Namespace
-
-							//return res
 							return nil
 						}
 
