@@ -1,4 +1,4 @@
 apiVersion: zeebe.io/v1
 kind: ZeebeCluster
 metadata:
-  name: zeebe-cluster-other
+  name: my-zeebe-cluster
